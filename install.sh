@@ -24,7 +24,7 @@ REPO_URL="https://github.com/ProxifyPRO/proxifypro-core"
 # Keygen IDs embebidos
 KEYGEN_ACCOUNT="9750731a-b53a-42f6-b8b7-323546599b23"
 KEYGEN_PRODUCT="6edf4915-fd05-4aed-9f3c-53bce798360f"
-KEYGEN_VALIDATION_TOKEN="activ-1c1033e67aa81e4a3aae0d7bc5f0c74dv3"
+KEYGEN_VALIDATION_TOKEN=""  # not used since v1.0.0 (validation moved to license-guard.js)
 
 print_banner() {
   clear 2>/dev/null || true
