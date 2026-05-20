@@ -1,0 +1,24 @@
+ProxifyPRO — Proprietary License
+
+Copyright (c) 2026 ProxifyPRO. All rights reserved.
+
+This installer (install.sh, install-macos.sh, install-windows.ps1) is
+provided as-is to facilitate installation of the ProxifyPRO software,
+which is a separate proprietary product.
+
+The installer scripts in this repository are licensed under the MIT
+License (see below). However, the software they install (ProxifyPRO)
+is proprietary and requires a valid license key obtained from
+https://proxifypro.com.
+
+---
+
+MIT License (applies to installer scripts only)
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this installer software, to deal in the installer software
+without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the installer.
+
+THE INSTALLER IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
