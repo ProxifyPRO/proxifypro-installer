@@ -51,6 +51,7 @@ BANNER
 BANNER
   echo -e "${NC}"
   echo -e "         ${BOLD}4G Mobile Proxy Manager${NC} ${CYAN}·${NC} Installer v${PROXIFYPRO_VERSION}"
+  echo -e "              ${CYAN}created by${NC} ${BOLD}iamvolans${NC}"
   echo -e "                 ${CYAN}https://proxifypro.com${NC}"
   echo ""
 }
