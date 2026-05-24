@@ -257,21 +257,21 @@ configure() {
   echo -e "  ${BOLD}Configuración inicial:${NC}"
   echo ""
 
-  read -p "    Email del administrador [admin@proxifypro.local]: " ADMIN_EMAIL
+  read -p "    Email del administrador [admin@proxifypro.local]: " ADMIN_EMAIL < /dev/tty
   ADMIN_EMAIL=${ADMIN_EMAIL:-admin@proxifypro.local}
 
   read -s -p "    Contraseña del administrador [Admin123!]: " ADMIN_PASS
   echo ""
   ADMIN_PASS=${ADMIN_PASS:-Admin123!}
 
-  read -p "    Puerto del dashboard [3000]: " PORT
+  read -p "    Puerto del dashboard [3000]: " PORT < /dev/tty
   PORT=${PORT:-3000}
 
-  read -p "    Clave de licencia ProxifyPRO: " LICENSE_KEY
+  read -p "    Clave de licencia ProxifyPRO: " LICENSE_KEY < /dev/tty
   while [ -z "$LICENSE_KEY" ]; do
     echo -e "    ${RED}La clave de licencia es obligatoria.${NC}"
     echo -e "    ${CYAN}Obtén tu licencia en https://proxifypro.com${NC}"
-    read -p "    Clave de licencia: " LICENSE_KEY
+    read -p "    Clave de licencia: " LICENSE_KEY < /dev/tty
   done
 
   cat > "$INSTALL_DIR/.env" << EOF
@@ -489,7 +489,7 @@ case "\$1" in
     echo "Abre en tu navegador: http://localhost:\$PORT"
     ;;
   uninstall)
-    read -p "¿Desinstalar ProxifyPRO? Se eliminarán todos los datos [s/N]: " confirm
+    read -p "¿Desinstalar ProxifyPRO? Se eliminarán todos los datos [s/N]: " confirm < /dev/tty
     if [ "\$confirm" = "s" ] || [ "\$confirm" = "S" ]; then
       systemctl stop proxifypro 2>/dev/null
       systemctl disable proxifypro 2>/dev/null
