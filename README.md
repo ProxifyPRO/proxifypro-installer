@@ -15,7 +15,7 @@
 ### Linux (Ubuntu / Debian)
 
 ```bash
-curl -fsSL https://proxifypro.com/install.sh | sudo bash
+curl -fsSL https://proxifypro.com/install.sh -o install.sh && sudo bash install.sh
 ```
 
 ### macOS (Intel + Apple Silicon)
