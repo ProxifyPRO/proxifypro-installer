@@ -18,7 +18,7 @@ NC='\033[0m'
 INSTALL_DIR="/opt/proxifypro"
 SERVICE_NAME="proxifypro"
 NODE_MIN=22
-PROXIFYPRO_VERSION="1.0.0"
+PROXIFYPRO_VERSION="2.0.0"
 REPO_URL="https://github.com/ProxifyPRO/proxifypro-core"
 
 # Keygen IDs embebidos
@@ -185,23 +185,56 @@ install_proxifypro() {
   log_step "Instalando ProxifyPRO en $INSTALL_DIR..."
 
   mkdir -p "$INSTALL_DIR"/{data,logs,config}
+  mkdir -p /var/log/proxifypro /run/proxifypro /etc/proxifypro
 
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
   if [ -f "$SCRIPT_DIR/package.json" ]; then
-    log_detail "Copiando archivos..."
+    # Running from project directory (developer mode)
+    log_detail "Copiando archivos desde directorio local..."
     cp -r "$SCRIPT_DIR/src"           "$INSTALL_DIR/"
     cp    "$SCRIPT_DIR/package.json"  "$INSTALL_DIR/"
     cp    "$SCRIPT_DIR/package-lock.json" "$INSTALL_DIR/" 2>/dev/null || true
-    log_ok "Archivos copiados"
+    log_ok "Archivos copiados (modo local)"
   else
-    die "Ejecuta el instalador desde la carpeta del proyecto ProxifyPRO"
+    # Running from curl pipe (production mode) — download tarball
+    DOWNLOAD_URL="https://github.com/ProxifyPRO/proxifypro-installer/releases/latest/download/proxifypro-v2.tar.gz"
+    log_detail "Descargando ProxifyPRO v${PROXIFYPRO_VERSION}..."
+    
+    TMPTAR=$(mktemp /tmp/proxifypro-XXXXXX.tar.gz)
+    HTTP_CODE=$(curl -fsSL -w "%{http_code}" -o "$TMPTAR" "$DOWNLOAD_URL" 2>/dev/null || echo "000")
+    
+    if [ "$HTTP_CODE" != "200" ] || [ ! -s "$TMPTAR" ]; then
+      rm -f "$TMPTAR"
+      die "Error descargando ProxifyPRO (HTTP $HTTP_CODE). Verifica tu conexión o contacta soporte."
+    fi
+    
+    log_detail "Extrayendo archivos..."
+    tar xzf "$TMPTAR" -C "$INSTALL_DIR/" 2>/dev/null || die "Error extrayendo el paquete"
+    rm -f "$TMPTAR"
+    log_ok "ProxifyPRO descargado y extraído"
   fi
 
   log_detail "Instalando dependencias npm..."
   cd "$INSTALL_DIR"
-  npm install --production --silent 2>/dev/null
+  npm install --production --silent 2>/dev/null || npm install --production 2>/dev/null
   log_ok "Dependencias npm instaladas"
+  
+  # USB autosuspend rules
+  cat > /etc/udev/rules.d/99-proxifypro-usb.rules << 'UDEVRULE'
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="12d1", ATTR{power/autosuspend_delay_ms}="-1", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="19d2", ATTR{power/autosuspend_delay_ms}="-1", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2c7c", ATTR{power/autosuspend_delay_ms}="-1", ATTR{power/control}="on"
+UDEVRULE
+  udevadm control --reload-rules 2>/dev/null
+  for d in /sys/bus/usb/devices/*/power/autosuspend_delay_ms; do echo -1 > "$d" 2>/dev/null; done
+  log_ok "USB autosuspend desactivado"
+  
+  # sysctl config
+  echo "net.ipv4.conf.all.route_localnet=1" > /etc/sysctl.d/99-proxifypro.conf
+  echo "net.ipv4.ip_forward=1" >> /etc/sysctl.d/99-proxifypro.conf
+  sysctl -p /etc/sysctl.d/99-proxifypro.conf >/dev/null 2>&1
+  log_ok "Network config (route_localnet + ip_forward)"
 }
 
 # ── 7. CONFIGURE ──────────────────────────────────────────
