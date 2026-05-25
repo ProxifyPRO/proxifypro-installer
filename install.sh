@@ -173,10 +173,10 @@ install_node() {
   fi
 
   if [ "$OS" = "debian" ]; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - 2>/dev/null
     apt-get install -y -qq nodejs
   elif [ "$OS" = "macos" ]; then
-    brew install node@20
+    brew install node@22
   fi
   log_ok "Node.js $(node -v) instalado"
 }
@@ -407,7 +407,7 @@ setup_systemd() {
 
   cat > /etc/systemd/system/proxifypro.service << EOF
 [Unit]
-Description=ProxifyPRO - 4G Mobile Proxy Manager
+Description=ProxifyPRO V2 — 4G Mobile Proxy Management
 After=network-online.target
 Wants=network-online.target
 
@@ -416,9 +416,10 @@ Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$INSTALL_DIR/.env
-ExecStart=$(which node) $INSTALL_DIR/src/index.js
+ExecStart=$(which node) $INSTALL_DIR/src/dongle/v2/main.js
 Restart=always
 RestartSec=10
+LimitNOFILE=65535
 StandardOutput=append:$INSTALL_DIR/logs/proxifypro.log
 StandardError=append:$INSTALL_DIR/logs/proxifypro-error.log
 
