@@ -241,64 +241,80 @@ UDEVRULE
 # ── 7. CONFIGURE ──────────────────────────────────────────
 configure() {
   log_step "Configurando ProxifyPRO..."
-
-  JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-  MACHINE_ID=$(node -e "
-    const {execSync}=require('child_process');
-    const crypto=require('crypto');
-    try {
-      const iface=execSync('ls /sys/class/net | grep -v lo | head -1').toString().trim();
-      const mac=execSync('cat /sys/class/net/'+iface+'/address').toString().trim();
-      const host=execSync('hostname').toString().trim();
-      console.log(crypto.createHash('sha256').update(mac+host).digest('hex').substring(0,32));
-    } catch(e){ console.log(crypto.randomBytes(16).toString('hex')); }
-  ")
-
+  
+  # Generate secure tokens
+  ADMIN_TOKEN=$(openssl rand -hex 16)
+  API_KEY=$(openssl rand -hex 24)
+  ROTATION_TOKEN=$(openssl rand -hex 12)
+  WEBHOOK_SECRET=$(openssl rand -hex 16)
+  POOL_PASS=$(openssl rand -hex 16)
+  
   echo ""
   echo -e "  ${BOLD}Configuración inicial:${NC}"
   echo ""
-
   read -p "    Email del administrador [admin@proxifypro.local]: " ADMIN_EMAIL < /dev/tty
   ADMIN_EMAIL=${ADMIN_EMAIL:-admin@proxifypro.local}
-
-  read -s -p "    Contraseña del administrador [Admin123!]: " ADMIN_PASS
+  read -s -p "    Contraseña del administrador [Admin123!]: " ADMIN_PASS < /dev/tty
   echo ""
   ADMIN_PASS=${ADMIN_PASS:-Admin123!}
-
   read -p "    Puerto del dashboard [3000]: " PORT < /dev/tty
   PORT=${PORT:-3000}
-
   read -p "    Clave de licencia ProxifyPRO: " LICENSE_KEY < /dev/tty
   while [ -z "$LICENSE_KEY" ]; do
     echo -e "    ${RED}La clave de licencia es obligatoria.${NC}"
     echo -e "    ${CYAN}Obtén tu licencia en https://proxifypro.com${NC}"
     read -p "    Clave de licencia: " LICENSE_KEY < /dev/tty
   done
-
+  
   cat > "$INSTALL_DIR/.env" << EOF
-# ProxifyPRO Configuration
+# ProxifyPRO V2 Configuration
+# Generated on $(date -Iseconds)
 NODE_ENV=production
 PORT=$PORT
 HOST=0.0.0.0
-INSTALL_DIR=$INSTALL_DIR
-DB_PATH=$INSTALL_DIR/data/proxifypro.db
-LOG_PATH=$INSTALL_DIR/logs
 
-# Secrets
-JWT_SECRET=$JWT_SECRET
+# Admin
+PROXIFYPRO_ADMIN_PASSWORD=$ADMIN_PASS
+PROXIFYPRO_ADMIN_TOKEN=$ADMIN_TOKEN
+PROXIFYPRO_API_KEY=$API_KEY
+PROXIFYPRO_ROTATION_TOKEN=$ROTATION_TOKEN
 ADMIN_EMAIL=$ADMIN_EMAIL
-ADMIN_PASSWORD=$ADMIN_PASS
 
-# License (auto-removed by license-guard after activation)
-INITIAL_LICENSE=$LICENSE_KEY
-
-# Keygen
+# License
+PROXIFYPRO_LICENSE_KEY=$LICENSE_KEY
 KEYGEN_ACCOUNT_ID=$KEYGEN_ACCOUNT
-KEYGEN_PRODUCT_ID=$KEYGEN_PRODUCT
-KEYGEN_TOKEN=$KEYGEN_VALIDATION_TOKEN
-EOF
-  chmod 600 "$INSTALL_DIR/.env"
 
+# Session Pool
+PROXIFYPRO_POOL_PORT=40001
+PROXIFYPRO_POOL_PASSWORD=$POOL_PASS
+PROXIFYPRO_POOL_STICKY_MS=600000
+
+# Logging
+PROXIFYPRO_LOG_LEVEL=INFO
+PROXIFYPRO_LOG_DIR=/var/log/proxifypro
+
+# Webhooks
+PROXIFYPRO_WEBHOOK_SECRET=$WEBHOOK_SECRET
+PROXIFYPRO_WEBHOOK_URLS=
+
+# Telegram (optional)
+PROXIFYPRO_TELEGRAM_TOKEN=
+PROXIFYPRO_TELEGRAM_CHAT_ID=
+EOF
+
+  chmod 600 "$INSTALL_DIR/.env"
+  
+  echo ""
+  echo -e "  ${GREEN}╔═══════════════════════════════════════════╗${NC}"
+  echo -e "  ${GREEN}║         Credenciales Generadas            ║${NC}"
+  echo -e "  ${GREEN}╠═══════════════════════════════════════════╣${NC}"
+  echo -e "  ${GREEN}║${NC}  Dashboard:  ${BOLD}http://localhost:$PORT${NC}"
+  echo -e "  ${GREEN}║${NC}  Password:   ${BOLD}$ADMIN_PASS${NC}"
+  echo -e "  ${GREEN}║${NC}  API Key:    ${BOLD}$API_KEY${NC}"
+  echo -e "  ${GREEN}║${NC}  Pool Pass:  ${BOLD}$POOL_PASS${NC}"
+  echo -e "  ${GREEN}║${NC}  License:    ${BOLD}$LICENSE_KEY${NC}"
+  echo -e "  ${GREEN}╚═══════════════════════════════════════════╝${NC}"
+  
   log_ok "Configuración guardada"
 }
 
