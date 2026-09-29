@@ -214,7 +214,7 @@ function New-SecureToken {
 function Configure-ProxifyPRO {
     Write-Step "Configurando ProxifyPRO..."
     
-    $jwtSecret = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 64 | ForEach-Object {[char]$_})
+    $jwtSecret = New-SecureToken -Bytes 32
     
     Write-Host ""
     Write-Host "  Configuracion inicial:" -ForegroundColor White
