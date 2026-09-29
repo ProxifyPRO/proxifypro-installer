@@ -408,7 +408,13 @@ setup_permissions() {
   cat > /usr/local/bin/proxifypro-rotate << 'ROTATE'
 #!/bin/bash
 IFACE=$1
-if [ -z "$IFACE" ]; then exit 1; fi
+# Runs via sudo NOPASSWD: accept only a plain interface name (max 15 chars,
+# no leading dash) and never the loopback device.
+if ! [[ "$IFACE" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,14}$ ]] || [ "$IFACE" = "lo" ]; then
+  echo "proxifypro-rotate: invalid interface '$IFACE'" >&2
+  exit 1
+fi
+[ -e "/sys/class/net/$IFACE" ] || { echo "proxifypro-rotate: no such interface '$IFACE'" >&2; exit 1; }
 ip link set "$IFACE" down && sleep 3 && ip link set "$IFACE" up
 ROTATE
   chmod +x /usr/local/bin/proxifypro-rotate
