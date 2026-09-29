@@ -190,6 +190,10 @@ install_proxifypro() {
 
   mkdir -p "$INSTALL_DIR"/{data,logs,config}
   mkdir -p /var/log/proxifypro /run/proxifypro /etc/proxifypro
+  # Database and logs may hold secrets: keep them away from other local users
+  chmod 700 "$INSTALL_DIR/data"
+  chmod 750 "$INSTALL_DIR/logs" /var/log/proxifypro
+  chgrp adm "$INSTALL_DIR/logs" /var/log/proxifypro 2>/dev/null || true
 
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
