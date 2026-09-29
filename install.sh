@@ -543,6 +543,9 @@ setup_systemd() {
 Description=ProxifyPRO V2 — 4G Mobile Proxy Management
 After=network-online.target
 Wants=network-online.target
+# Stop restarting after 5 failures in 10 minutes (a crash loop needs a human)
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -553,6 +556,11 @@ ExecStart=$(which node) $INSTALL_DIR/src/dongle/v2/main.js
 Restart=always
 RestartSec=10
 LimitNOFILE=65535
+# Resource limits for the whole cgroup (node + its 3proxy children).
+# No CPUQuota: throttling would slow down proxy traffic.
+MemoryHigh=60%
+MemoryMax=75%
+TasksMax=16384
 StandardOutput=append:$INSTALL_DIR/logs/proxifypro.log
 StandardError=append:$INSTALL_DIR/logs/proxifypro-error.log
 
