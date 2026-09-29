@@ -203,6 +203,14 @@ function Install-ProxifyPRO {
 }
 
 # ── 7. CONFIGURE ──────────────────────────────────────────
+# Hex string from the OS CSPRNG (Get-Random is not cryptographically secure)
+function New-SecureToken {
+    param([int]$Bytes = 16)
+    $buf = New-Object byte[] $Bytes
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buf)
+    return -join ($buf | ForEach-Object { $_.ToString("x2") })
+}
+
 function Configure-ProxifyPRO {
     Write-Step "Configurando ProxifyPRO..."
     
@@ -215,10 +223,14 @@ function Configure-ProxifyPRO {
     $adminEmail = Read-Host "    Email del administrador [admin@proxifypro.local]"
     if ([string]::IsNullOrEmpty($adminEmail)) { $adminEmail = "admin@proxifypro.local" }
     
-    $adminPass = Read-Host "    Contrasena del administrador [Admin123!]" -AsSecureString
+    $adminPass = Read-Host "    Contrasena del administrador [Enter = generar aleatoria]" -AsSecureString
     $adminPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass))
-    if ([string]::IsNullOrEmpty($adminPassPlain)) { $adminPassPlain = "Admin123!" }
+    # Never fall back to a well-known default password
+    if ([string]::IsNullOrEmpty($adminPassPlain)) {
+        $adminPassPlain = New-SecureToken -Bytes 12
+        Write-Host "    Contrasena generada: $adminPassPlain (guardala)" -ForegroundColor Yellow
+    }
     
     $port = Read-Host "    Puerto del dashboard [3000]"
     if ([string]::IsNullOrEmpty($port)) { $port = "3000" }

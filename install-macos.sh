@@ -242,9 +242,13 @@ configure() {
   read -p "    Email del administrador [admin@proxifypro.local]: " ADMIN_EMAIL
   ADMIN_EMAIL=${ADMIN_EMAIL:-admin@proxifypro.local}
   
-  read -s -p "    Contraseña del administrador [Admin123!]: " ADMIN_PASS
+  read -s -p "    Contraseña del administrador [Enter = generar aleatoria]: " ADMIN_PASS
   echo ""
-  ADMIN_PASS=${ADMIN_PASS:-Admin123!}
+  # Never fall back to a well-known default password
+  if [ -z "$ADMIN_PASS" ]; then
+    ADMIN_PASS=$(openssl rand -hex 12)
+    echo -e "    ${YELLOW}Contraseña generada:${NC} ${BOLD}$ADMIN_PASS${NC} (guárdala)"
+  fi
   
   read -p "    Puerto del dashboard [3000]: " PORT
   PORT=${PORT:-3000}

@@ -254,9 +254,10 @@ configure() {
   echo ""
   read -p "    Email del administrador [admin@proxifypro.local]: " ADMIN_EMAIL < /dev/tty
   ADMIN_EMAIL=${ADMIN_EMAIL:-admin@proxifypro.local}
-  read -s -p "    Contraseña del administrador [Admin123!]: " ADMIN_PASS < /dev/tty
+  read -s -p "    Contraseña del administrador [Enter = generar aleatoria]: " ADMIN_PASS < /dev/tty
   echo ""
-  ADMIN_PASS=${ADMIN_PASS:-Admin123!}
+  # Never fall back to a well-known default: the dashboard listens on 0.0.0.0
+  ADMIN_PASS=${ADMIN_PASS:-$(openssl rand -hex 12)}
   read -p "    Puerto del dashboard [3000]: " PORT < /dev/tty
   PORT=${PORT:-3000}
   read -p "    Clave de licencia ProxifyPRO: " LICENSE_KEY < /dev/tty
