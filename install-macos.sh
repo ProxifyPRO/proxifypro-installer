@@ -193,7 +193,9 @@ install_3proxy() {
   
   # Compilar desde fuente
   log_detail "Compilando 3proxy desde fuente..."
-  cd /tmp
+  # Private build dir instead of fixed /tmp paths
+  BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/proxifypro-3proxy.XXXXXX")
+  cd "$BUILD_DIR"
   curl -fsSL https://github.com/3proxy/3proxy/archive/refs/tags/0.9.4.tar.gz -o 3proxy.tar.gz
   tar xzf 3proxy.tar.gz
   cd 3proxy-0.9.4
@@ -201,7 +203,7 @@ install_3proxy() {
   cp bin/3proxy /usr/local/bin/3proxy
   chmod +x /usr/local/bin/3proxy
   cd ~
-  rm -rf /tmp/3proxy*
+  rm -rf "$BUILD_DIR"
   log_ok "3proxy compilado e instalado"
 }
 

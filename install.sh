@@ -147,14 +147,17 @@ install_deps() {
 
 install_3proxy_source() {
   log_detail "Compilando 3proxy desde fuente..."
-  cd /tmp
+  # Private build dir: fixed /tmp paths let local users plant symlinks or sources
+  BUILD_DIR=$(mktemp -d /tmp/proxifypro-3proxy.XXXXXX)
+  cd "$BUILD_DIR"
   wget -q https://github.com/3proxy/3proxy/archive/refs/tags/0.9.4.tar.gz -O 3proxy.tar.gz
-  tar xzf 3proxy.tar.gz
+  tar xzf 3proxy.tar.gz --no-same-owner
   cd 3proxy-0.9.4
   make -f Makefile.Linux -j$(nproc) 2>/dev/null
   cp bin/3proxy /usr/bin/3proxy
-  chmod +x /usr/bin/3proxy
+  chmod 755 /usr/bin/3proxy
   cd /
+  rm -rf "$BUILD_DIR"
   log_ok "3proxy compilado e instalado"
 }
 
