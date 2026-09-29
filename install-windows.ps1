@@ -249,6 +249,9 @@ INITIAL_LICENSE=$licenseKey
 PROXY_BIN=$INSTALL_DIR\bin\3proxy.exe
 "@
     Set-Content -Path "$INSTALL_DIR\.env" -Value $envContent
+    # Restrict .env to Administrators and SYSTEM (the service account); SIDs
+    # are used so this works on non-English Windows.
+    & icacls "$INSTALL_DIR\.env" /inheritance:r /grant:r "*S-1-5-32-544:F" "*S-1-5-18:F" | Out-Null
     Write-Ok "Configuracion guardada"
     
     return @{ Port = $port; Email = $adminEmail; LicenseKey = $licenseKey }

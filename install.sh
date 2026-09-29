@@ -266,7 +266,8 @@ configure() {
     read -p "    Clave de licencia: " LICENSE_KEY < /dev/tty
   done
   
-  cat > "$INSTALL_DIR/.env" << EOF
+  # Create .env with 600 from the start (umask), not after it is written
+  (umask 077; cat > "$INSTALL_DIR/.env") << EOF
 # ProxifyPRO V2 Configuration
 # Generated on $(date -Iseconds)
 NODE_ENV=production

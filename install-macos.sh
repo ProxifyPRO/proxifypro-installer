@@ -258,7 +258,7 @@ configure() {
     fi
   done
   
-  cat > "$INSTALL_DIR/.env" << ENV
+  (umask 077; cat > "$INSTALL_DIR/.env") << ENV
 PORT=$PORT
 DB_PATH=$INSTALL_DIR/data/proxifypro.db
 LOG_PATH=$INSTALL_DIR/logs
@@ -272,6 +272,7 @@ KEYGEN_PRODUCT_ID=$KEYGEN_PRODUCT
 KEYGEN_TOKEN=$KEYGEN_TOKEN
 INITIAL_LICENSE=$LICENSE_KEY
 ENV
+  chmod 600 "$INSTALL_DIR/.env"
   
   log_ok "Configuración guardada"
 }
