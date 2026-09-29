@@ -92,6 +92,42 @@ check_os() {
   fi
 }
 
+# ── 2b. PRE-FLIGHT ────────────────────────────────────────
+# Requirements: RAM > 2GB, >= 2 CPU cores, > 1GB free disk.
+# Low disk is fatal; RAM/CPU below spec only warn (fewer dongles still work).
+# Set PROXIFYPRO_SKIP_PREFLIGHT=1 to skip.
+preflight() {
+  log_step "Verificando requisitos del sistema..."
+  if [ "${PROXIFYPRO_SKIP_PREFLIGHT:-0}" = "1" ]; then
+    log_warn "Pre-flight omitido (PROXIFYPRO_SKIP_PREFLIGHT=1)"
+    return
+  fi
+
+  # MemTotal excludes kernel-reserved memory, so a "2GB" host reports ~1.9GB
+  MEM_MB=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  if [ "$MEM_MB" -lt 1900 ]; then
+    log_warn "RAM: ${MEM_MB}MB — se recomiendan más de 2GB"
+  else
+    log_ok "RAM: ${MEM_MB}MB"
+  fi
+
+  CORES=$(nproc 2>/dev/null || echo 1)
+  if [ "$CORES" -lt 2 ]; then
+    log_warn "CPU: $CORES núcleo(s) — se recomiendan al menos 2"
+  else
+    log_ok "CPU: $CORES núcleos"
+  fi
+
+  # Free space where $INSTALL_DIR will live (nearest existing parent)
+  DISK_PATH="$INSTALL_DIR"
+  while [ ! -d "$DISK_PATH" ]; do DISK_PATH=$(dirname "$DISK_PATH"); done
+  DISK_MB=$(df -Pm "$DISK_PATH" | awk 'NR==2 {print $4}')
+  if [ "${DISK_MB:-0}" -lt 1024 ]; then
+    die "Disco: ${DISK_MB}MB libres en $DISK_PATH — se necesita más de 1GB"
+  fi
+  log_ok "Disco: ${DISK_MB}MB libres en $DISK_PATH"
+}
+
 # ── 3. FIX DNS ────────────────────────────────────────────
 fix_dns() {
   log_step "Configurando DNS..."
@@ -629,6 +665,7 @@ main() {
   print_banner
   check_root
   check_os
+  preflight
   fix_dns
   install_deps
   install_node
