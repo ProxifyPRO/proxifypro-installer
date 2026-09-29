@@ -608,14 +608,19 @@ EOF
 create_cli() {
   log_step "Creando comando CLI..."
 
+  # Install-time values go in an unquoted header; the body is quoted so it
+  # needs no \$ escaping.
   cat > /usr/local/bin/proxifypro << CLIEOF
 #!/bin/bash
 INSTALL_DIR="$INSTALL_DIR"
-PORT=\$(grep "^PORT=" \$INSTALL_DIR/.env 2>/dev/null | cut -d= -f2 || echo 3000)
-case "\$1" in
+PROXIFYPRO_VERSION="$PROXIFYPRO_VERSION"
+CLIEOF
+  cat >> /usr/local/bin/proxifypro << 'CLIEOF'
+PORT=$(grep "^PORT=" $INSTALL_DIR/.env 2>/dev/null | cut -d= -f2 || echo 3000)
+case "$1" in
   start)
     systemctl start proxifypro
-    echo -e "\033[0;32m✓\033[0m ProxifyPRO iniciado → http://localhost:\$PORT"
+    echo -e "\033[0;32m✓\033[0m ProxifyPRO iniciado → http://localhost:$PORT"
     ;;
   stop)
     systemctl stop proxifypro
@@ -623,48 +628,48 @@ case "\$1" in
     ;;
   restart)
     systemctl restart proxifypro
-    echo -e "\033[0;32m✓\033[0m ProxifyPRO reiniciado → http://localhost:\$PORT"
+    echo -e "\033[0;32m✓\033[0m ProxifyPRO reiniciado → http://localhost:$PORT"
     ;;
   status)
     systemctl status proxifypro
     ;;
   logs)
-    tail -f \$INSTALL_DIR/logs/proxifypro.log
+    tail -f $INSTALL_DIR/logs/proxifypro.log
     ;;
   errors)
-    tail -f \$INSTALL_DIR/logs/proxifypro-error.log
+    tail -f $INSTALL_DIR/logs/proxifypro-error.log
     ;;
   update)
     echo "Actualizando ProxifyPRO..."
     systemctl stop proxifypro
-    SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-    cp -r \$SCRIPT_DIR/src \$INSTALL_DIR/
-    cp \$SCRIPT_DIR/package.json \$INSTALL_DIR/
-    cd \$INSTALL_DIR && npm install --production --silent
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    cp -r $SCRIPT_DIR/src $INSTALL_DIR/
+    cp $SCRIPT_DIR/package.json $INSTALL_DIR/
+    cd $INSTALL_DIR && npm install --production --silent
     systemctl start proxifypro
     echo -e "\033[0;32m✓\033[0m ProxifyPRO actualizado"
     ;;
   open)
-    xdg-open "http://localhost:\$PORT" 2>/dev/null || \
-    echo "Abre en tu navegador: http://localhost:\$PORT"
+    xdg-open "http://localhost:$PORT" 2>/dev/null || \
+    echo "Abre en tu navegador: http://localhost:$PORT"
     ;;
   uninstall)
     read -p "¿Desinstalar ProxifyPRO? Se eliminarán todos los datos [s/N]: " confirm < /dev/tty
-    if [ "\$confirm" = "s" ] || [ "\$confirm" = "S" ]; then
+    if [ "$confirm" = "s" ] || [ "$confirm" = "S" ]; then
       systemctl stop proxifypro 2>/dev/null
       systemctl disable proxifypro 2>/dev/null
       rm -f /etc/systemd/system/proxifypro.service
       rm -f /etc/sudoers.d/proxifypro
       rm -f /usr/local/bin/proxifypro-rotate
       rm -f /usr/local/bin/proxifypro
-      rm -rf \$INSTALL_DIR
+      rm -rf $INSTALL_DIR
       systemctl daemon-reload
       echo "ProxifyPRO desinstalado"
     fi
     ;;
   *)
     echo ""
-    echo "  ProxifyPRO v$PROXIFYPRO_VERSION — 4G Mobile Proxy Manager"
+    echo "  ProxifyPRO $(cat "$INSTALL_DIR/.release" 2>/dev/null || echo "v$PROXIFYPRO_VERSION") — 4G Mobile Proxy Manager"
     echo ""
     echo "  Uso: proxifypro {comando}"
     echo ""
@@ -679,8 +684,8 @@ case "\$1" in
     echo "    update    Actualizar ProxifyPRO"
     echo "    uninstall Desinstalar completamente"
     echo ""
-    echo "  Dashboard: http://localhost:\$PORT"
-    echo "  Docs API:  http://localhost:\$PORT/api/docs"
+    echo "  Dashboard: http://localhost:$PORT"
+    echo "  Docs API:  http://localhost:$PORT/api/docs"
     echo ""
     ;;
 esac
