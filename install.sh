@@ -614,8 +614,126 @@ create_cli() {
 #!/bin/bash
 INSTALL_DIR="$INSTALL_DIR"
 PROXIFYPRO_VERSION="$PROXIFYPRO_VERSION"
+RELEASE_API="$RELEASE_API"
+RELEASE_ASSET="$RELEASE_ASSET"
 CLIEOF
   cat >> /usr/local/bin/proxifypro << 'CLIEOF'
+BACKUP_DIR="${PROXIFYPRO_BACKUP_DIR:-/var/backups/proxifypro}"
+# Never replaced by an update
+PRESERVE=(.env data logs config)
+
+ok()   { echo -e "\033[0;32m✓\033[0m $1"; }
+fail() { echo -e "\033[0;31m✗\033[0m $1" >&2; exit 1; }
+
+# Writes "<tag>|<asset url>|<sha256 hex>" and saves the release notes to $1.
+release_meta() {
+  curl -fsSL --max-time 15 -H "Accept: application/vnd.github+json" "$RELEASE_API" 2>/dev/null | \
+    ASSET="$RELEASE_ASSET" NOTES="$1" node -e '
+      let d="";
+      process.stdin.on("data", c => d += c);
+      process.stdin.on("end", () => {
+        try {
+          const r = JSON.parse(d);
+          const a = (r.assets || []).find(x => x.name === process.env.ASSET);
+          if (!a) return;
+          const url = a.browser_download_url || "";
+          if (!url.startsWith("https://github.com/ProxifyPRO/proxifypro-installer/releases/download/")) return;
+          const m = /^sha256:([0-9a-f]{64})$/.exec(a.digest || "");
+          require("fs").writeFileSync(process.env.NOTES, (r.name || r.tag_name || "") + "\n\n" + (r.body || ""));
+          process.stdout.write([r.tag_name || "", url, m ? m[1] : ""].join("|") + "\n");
+        } catch (e) {}
+      });
+    '
+}
+
+wait_active() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 2
+    systemctl is-active --quiet proxifypro && return 0
+  done
+  return 1
+}
+
+# Replace $INSTALL_DIR contents (except PRESERVE) with the tree in $1
+install_tree() {
+  rm -rf "$INSTALL_DIR/src"
+  cp -a "$1/." "$INSTALL_DIR/"
+  (cd "$INSTALL_DIR" && npm install --production --silent) || return 1
+}
+
+cmd_update() {
+  [ "$EUID" -eq 0 ] || fail "Ejecuta: sudo proxifypro update"
+  FORCE=0; [ "$1" = "--force" ] && FORCE=1
+
+  WORK=$(mktemp -d /tmp/proxifypro-update.XXXXXX)
+  trap 'rm -rf "$WORK"' EXIT
+
+  echo "Buscando la última versión..."
+  IFS="|" read -r TAG URL SHA < <(release_meta "$WORK/notes") || true
+  [ -n "$URL" ] || fail "No se pudo consultar GitHub Releases. Reintenta más tarde."
+  [ -n "$SHA" ] || fail "La release $TAG no publica checksum SHA-256 — actualización abortada."
+
+  CURRENT=$(cat "$INSTALL_DIR/.release" 2>/dev/null || echo "desconocida")
+  if [ "$TAG" = "$CURRENT" ] && [ "$FORCE" = 0 ]; then
+    ok "Ya tienes la última versión ($TAG). Usa --force para reinstalarla."
+    return 0
+  fi
+  echo "Versión instalada: $CURRENT → nueva: $TAG"
+
+  curl -fsSL --max-time 300 -o "$WORK/pkg.tar.gz" "$URL" || fail "Error descargando $URL"
+  [ "$(sha256sum "$WORK/pkg.tar.gz" | cut -d' ' -f1)" = "$SHA" ] || fail "Checksum inválido — actualización abortada."
+  ok "Checksum SHA-256 verificado"
+
+  mkdir "$WORK/new"
+  tar xzf "$WORK/pkg.tar.gz" -C "$WORK/new" --no-same-owner || fail "Error extrayendo el paquete"
+  [ -f "$WORK/new/package.json" ] && [ -f "$WORK/new/src/dongle/v2/main.js" ] || \
+    fail "Paquete con estructura inesperada — actualización abortada."
+  for p in "${PRESERVE[@]}"; do rm -rf "$WORK/new/$p"; done
+
+  echo "Deteniendo servicio..."
+  systemctl stop proxifypro
+
+  # Backup taken with the service stopped so the database is consistent
+  mkdir -p "$BACKUP_DIR" && chmod 700 "$BACKUP_DIR"
+  BACKUP="$BACKUP_DIR/pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
+  if ! tar czf "$BACKUP" -C "$INSTALL_DIR" --exclude=./node_modules --exclude=./logs .; then
+    systemctl start proxifypro
+    fail "No se pudo crear el backup — actualización abortada, servicio reiniciado."
+  fi
+  chmod 600 "$BACKUP"
+  ok "Backup: $BACKUP"
+  # Keep the 5 most recent pre-update backups
+  ls -1t "$BACKUP_DIR"/pre-update-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+
+  echo "Instalando $TAG..."
+  if install_tree "$WORK/new"; then
+    echo "$TAG" > "$INSTALL_DIR/.release"
+    systemctl start proxifypro
+    if wait_active; then
+      ok "ProxifyPRO actualizado a $TAG"
+      echo ""
+      echo "── Changelog ─────────────────────────────"
+      cat "$WORK/notes"
+      echo ""
+      return 0
+    fi
+  fi
+
+  echo "La nueva versión no arrancó — restaurando backup..." >&2
+  systemctl stop proxifypro 2>/dev/null
+  mkdir "$WORK/old"
+  tar xzf "$BACKUP" -C "$WORK/old"
+  for p in "${PRESERVE[@]}"; do
+    [ -e "$WORK/old/$p" ] || continue
+    rm -rf "$INSTALL_DIR/$p"
+    cp -a "$WORK/old/$p" "$INSTALL_DIR/"
+  done
+  for p in "${PRESERVE[@]}"; do rm -rf "$WORK/old/$p"; done
+  install_tree "$WORK/old"
+  systemctl start proxifypro
+  fail "Actualización fallida; se restauró $CURRENT. Revisa: proxifypro errors"
+}
+
 PORT=$(grep "^PORT=" $INSTALL_DIR/.env 2>/dev/null | cut -d= -f2 || echo 3000)
 case "$1" in
   start)
@@ -640,14 +758,7 @@ case "$1" in
     tail -f $INSTALL_DIR/logs/proxifypro-error.log
     ;;
   update)
-    echo "Actualizando ProxifyPRO..."
-    systemctl stop proxifypro
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    cp -r $SCRIPT_DIR/src $INSTALL_DIR/
-    cp $SCRIPT_DIR/package.json $INSTALL_DIR/
-    cd $INSTALL_DIR && npm install --production --silent
-    systemctl start proxifypro
-    echo -e "\033[0;32m✓\033[0m ProxifyPRO actualizado"
+    cmd_update "$2"
     ;;
   open)
     xdg-open "http://localhost:$PORT" 2>/dev/null || \
@@ -681,7 +792,7 @@ case "$1" in
     echo "    logs      Ver logs en tiempo real"
     echo "    errors    Ver errores en tiempo real"
     echo "    open      Abrir dashboard en el navegador"
-    echo "    update    Actualizar ProxifyPRO"
+    echo "    update    Actualizar a la última release (--force para reinstalar)"
     echo "    uninstall Desinstalar completamente"
     echo ""
     echo "  Dashboard: http://localhost:$PORT"
