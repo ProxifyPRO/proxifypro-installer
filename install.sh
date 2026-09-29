@@ -616,6 +616,7 @@ INSTALL_DIR="$INSTALL_DIR"
 PROXIFYPRO_VERSION="$PROXIFYPRO_VERSION"
 RELEASE_API="$RELEASE_API"
 RELEASE_ASSET="$RELEASE_ASSET"
+PROXY_PORT_RANGE="$PROXY_PORT_RANGE"
 CLIEOF
   cat >> /usr/local/bin/proxifypro << 'CLIEOF'
 BACKUP_DIR="${PROXIFYPRO_BACKUP_DIR:-/var/backups/proxifypro}"
@@ -772,10 +773,19 @@ case "$1" in
       rm -f /etc/systemd/system/proxifypro.service
       rm -f /etc/sudoers.d/proxifypro
       rm -f /usr/local/bin/proxifypro-rotate
-      rm -f /usr/local/bin/proxifypro
-      rm -rf $INSTALL_DIR
+      rm -f /etc/logrotate.d/proxifypro
+      rm -f /etc/udev/rules.d/99-proxifypro-usb.rules
+      rm -f /etc/sysctl.d/99-proxifypro.conf
+      if command -v ufw &> /dev/null && [ -n "$PORT" ]; then
+        ufw delete allow "$PORT/tcp" > /dev/null 2>&1
+        ufw delete allow "$PROXY_PORT_RANGE/tcp" > /dev/null 2>&1
+      fi
+      rm -rf "$INSTALL_DIR" /var/log/proxifypro
+      udevadm control --reload-rules 2>/dev/null
       systemctl daemon-reload
+      rm -f /usr/local/bin/proxifypro
       echo "ProxifyPRO desinstalado"
+      [ -d "$BACKUP_DIR" ] && echo "Backups conservados en $BACKUP_DIR (bórralos manualmente si no los necesitas)"
     fi
     ;;
   *)
