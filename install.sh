@@ -263,6 +263,12 @@ configure() {
   ADMIN_PASS=${ADMIN_PASS:-$(openssl rand -hex 12)}
   read -p "    Puerto del dashboard [3000]: " PORT < /dev/tty
   PORT=${PORT:-3000}
+  # PORT ends up in .env, the service unit and the firewall rules
+  while ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; do
+    echo -e "    ${RED}Puerto inválido (1-65535).${NC}"
+    read -p "    Puerto del dashboard [3000]: " PORT < /dev/tty
+    PORT=${PORT:-3000}
+  done
   read -p "    Clave de licencia ProxifyPRO: " LICENSE_KEY < /dev/tty
   while [ -z "$LICENSE_KEY" ]; do
     echo -e "    ${RED}La clave de licencia es obligatoria.${NC}"

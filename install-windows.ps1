@@ -234,6 +234,12 @@ function Configure-ProxifyPRO {
     
     $port = Read-Host "    Puerto del dashboard [3000]"
     if ([string]::IsNullOrEmpty($port)) { $port = "3000" }
+    # $port ends up in .env, the service environment and the firewall rule
+    while (-not ($port -match '^\d{1,5}$' -and [int]$port -ge 1 -and [int]$port -le 65535)) {
+        Write-Host "    Puerto invalido (1-65535)." -ForegroundColor Red
+        $port = Read-Host "    Puerto del dashboard [3000]"
+        if ([string]::IsNullOrEmpty($port)) { $port = "3000" }
+    }
     
     $licenseKey = ""
     while ([string]::IsNullOrEmpty($licenseKey)) {

@@ -254,6 +254,12 @@ configure() {
   
   read -p "    Puerto del dashboard [3000]: " PORT
   PORT=${PORT:-3000}
+  # PORT ends up in .env, the service unit and the firewall rules
+  while ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; do
+    echo -e "    ${RED}Puerto inválido (1-65535).${NC}"
+    read -p "    Puerto del dashboard [3000]: " PORT
+    PORT=${PORT:-3000}
+  done
   
   LICENSE_KEY=""
   while [ -z "$LICENSE_KEY" ]; do
