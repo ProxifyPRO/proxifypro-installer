@@ -369,6 +369,25 @@ EOF
   log_ok "Configuración guardada"
 }
 
+# ── 7b. FIREWALL ──────────────────────────────────────────
+# Dashboard port + per-dongle proxy ports. Rules are only added when ufw is
+# already active: enabling it here could lock the user out of SSH.
+PROXY_PORT_RANGE="30001:31010"
+configure_firewall() {
+  log_step "Configurando firewall..."
+  if ! command -v ufw &> /dev/null; then
+    log_detail "ufw no instalado — omitido"
+    return
+  fi
+  if ! ufw status 2>/dev/null | grep -q "^Status: active"; then
+    log_warn "ufw inactivo — no se modificó. Si lo activas, abre: $PORT/tcp y $PROXY_PORT_RANGE/tcp"
+    return
+  fi
+  ufw allow "$PORT/tcp" comment "ProxifyPRO dashboard" > /dev/null
+  ufw allow "$PROXY_PORT_RANGE/tcp" comment "ProxifyPRO proxies" > /dev/null
+  log_ok "ufw: permitido $PORT/tcp y $PROXY_PORT_RANGE/tcp"
+}
+
 # ── 8. VALIDATE LICENSE ───────────────────────────────────
 validate_license() {
   log_step "Validando licencia..."
@@ -671,6 +690,7 @@ main() {
   install_node
   install_proxifypro
   configure
+  configure_firewall
   # validate_license — delegado a license-guard.js (al arrancar el service)
   setup_permissions
   setup_systemd
