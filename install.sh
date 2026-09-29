@@ -568,6 +568,22 @@ StandardError=append:$INSTALL_DIR/logs/proxifypro-error.log
 WantedBy=multi-user.target
 EOF
 
+  # Log rotation: the service appends to plain files (not journald), so
+  # rotate with copytruncate — systemd keeps the O_APPEND handle open.
+  cat > /etc/logrotate.d/proxifypro << EOF
+$INSTALL_DIR/logs/*.log /var/log/proxifypro/*.log {
+    daily
+    rotate 14
+    maxsize 100M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root adm
+}
+EOF
+
   # Config 3proxy dir — the service runs as root and 3proxy configs can
   # execute commands, so only root may write here.
   mkdir -p "$INSTALL_DIR/config"
