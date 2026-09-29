@@ -443,9 +443,10 @@ StandardError=append:$INSTALL_DIR/logs/proxifypro-error.log
 WantedBy=multi-user.target
 EOF
 
-  # Config 3proxy dir
-  mkdir -p /opt/proxifypro/config
-  chmod 777 /opt/proxifypro/config
+  # Config 3proxy dir — the service runs as root and 3proxy configs can
+  # execute commands, so only root may write here.
+  mkdir -p "$INSTALL_DIR/config"
+  chmod 700 "$INSTALL_DIR/config"
 
   systemctl daemon-reload
   systemctl enable proxifypro --quiet
