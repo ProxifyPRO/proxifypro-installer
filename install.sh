@@ -20,6 +20,8 @@ SERVICE_NAME="proxifypro"
 NODE_MIN=22
 PROXIFYPRO_VERSION="2.0.0"
 REPO_URL="https://github.com/ProxifyPRO/proxifypro-core"
+RELEASE_API="https://api.github.com/repos/ProxifyPRO/proxifypro-installer/releases/latest"
+RELEASE_ASSET="proxifypro-v2.tar.gz"
 
 # Keygen IDs embebidos
 KEYGEN_ACCOUNT="9750731a-b53a-42f6-b8b7-323546599b23"
@@ -221,6 +223,28 @@ install_node() {
 }
 
 # ── 6. INSTALL PROXIFYPRO ─────────────────────────────────
+# Prints "<tag>|<asset url>|<sha256 hex>" for the latest release, or
+# nothing if the GitHub API is unreachable. Only accepts asset URLs on
+# this repo's GitHub releases.
+release_meta() {
+  curl -fsSL --max-time 15 -H "Accept: application/vnd.github+json" "$RELEASE_API" 2>/dev/null | \
+    ASSET="$RELEASE_ASSET" node -e '
+      let d="";
+      process.stdin.on("data", c => d += c);
+      process.stdin.on("end", () => {
+        try {
+          const r = JSON.parse(d);
+          const a = (r.assets || []).find(x => x.name === process.env.ASSET);
+          if (!a) return;
+          const url = a.browser_download_url || "";
+          if (!url.startsWith("https://github.com/ProxifyPRO/proxifypro-installer/releases/download/")) return;
+          const m = /^sha256:([0-9a-f]{64})$/.exec(a.digest || "");
+          process.stdout.write([r.tag_name || "", url, m ? m[1] : ""].join("|") + "\n");
+        } catch (e) {}
+      });
+    '
+}
+
 install_proxifypro() {
   log_step "Instalando ProxifyPRO en $INSTALL_DIR..."
 
@@ -242,8 +266,13 @@ install_proxifypro() {
     log_ok "Archivos copiados (modo local)"
   else
     # Running from curl pipe (production mode) — download tarball
-    DOWNLOAD_URL="https://github.com/ProxifyPRO/proxifypro-installer/releases/latest/download/proxifypro-v2.tar.gz"
-    log_detail "Descargando ProxifyPRO v${PROXIFYPRO_VERSION}..."
+    DOWNLOAD_URL="https://github.com/ProxifyPRO/proxifypro-installer/releases/latest/download/$RELEASE_ASSET"
+    RELEASE_TAG=""
+    EXPECTED_SHA=""
+    # Release metadata carries the asset's sha256 digest
+    IFS="|" read -r RELEASE_TAG META_URL EXPECTED_SHA < <(release_meta) || true
+    if [ -n "$META_URL" ]; then DOWNLOAD_URL="$META_URL"; fi
+    log_detail "Descargando ProxifyPRO ${RELEASE_TAG:-v${PROXIFYPRO_VERSION}}..."
     
     TMPTAR=$(mktemp /tmp/proxifypro-XXXXXX.tar.gz)
     HTTP_CODE=$(curl -fsSL -w "%{http_code}" -o "$TMPTAR" "$DOWNLOAD_URL" 2>/dev/null || echo "000")
@@ -252,10 +281,22 @@ install_proxifypro() {
       rm -f "$TMPTAR"
       die "Error descargando ProxifyPRO (HTTP $HTTP_CODE). Verifica tu conexión o contacta soporte."
     fi
+
+    if [ -n "$EXPECTED_SHA" ]; then
+      ACTUAL_SHA=$(sha256sum "$TMPTAR" | cut -d' ' -f1)
+      if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+        rm -f "$TMPTAR"
+        die "Checksum inválido del paquete (esperado $EXPECTED_SHA, obtenido $ACTUAL_SHA). Instalación abortada."
+      fi
+      log_ok "Checksum SHA-256 verificado"
+    else
+      log_warn "No se pudo obtener el checksum de la release — paquete sin verificar"
+    fi
     
     log_detail "Extrayendo archivos..."
-    tar xzf "$TMPTAR" -C "$INSTALL_DIR/" 2>/dev/null || die "Error extrayendo el paquete"
+    tar xzf "$TMPTAR" -C "$INSTALL_DIR/" --no-same-owner 2>/dev/null || die "Error extrayendo el paquete"
     rm -f "$TMPTAR"
+    if [ -n "$RELEASE_TAG" ]; then echo "$RELEASE_TAG" > "$INSTALL_DIR/.release"; fi
     log_ok "ProxifyPRO descargado y extraído"
   fi
 
