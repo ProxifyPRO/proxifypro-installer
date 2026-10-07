@@ -166,6 +166,13 @@ install_deps() {
     apt-get install -y -qq curl wget git build-essential sqlite3 net-tools 2>/dev/null
     log_ok "Dependencias base instaladas"
 
+    # Modem networking: dhclient (DHCP inside each namespace), iproute2/iptables,
+    # ethtool (factory MAC) and usb-modeswitch — switches dongles that boot as a
+    # virtual CD-ROM (most Huawei/ZTE/no-name 4G sticks) into modem mode.
+    apt-get install -y -qq isc-dhcp-client iproute2 iptables ethtool usb-modeswitch usb-modeswitch-data 2>/dev/null \
+      && log_ok "Soporte de modems USB (dhclient, usb-modeswitch) instalado" \
+      || log_warn "No se pudieron instalar todas las dependencias de modems (isc-dhcp-client / usb-modeswitch)"
+
     # 3proxy
     if ! command -v 3proxy &> /dev/null; then
       log_detail "Instalando 3proxy..."
