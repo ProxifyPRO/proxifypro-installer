@@ -193,7 +193,9 @@ install_3proxy() {
   
   # Compilar desde fuente
   log_detail "Compilando 3proxy desde fuente..."
-  cd /tmp
+  # Private build dir instead of fixed /tmp paths
+  BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/proxifypro-3proxy.XXXXXX")
+  cd "$BUILD_DIR"
   curl -fsSL https://github.com/3proxy/3proxy/archive/refs/tags/0.9.4.tar.gz -o 3proxy.tar.gz
   tar xzf 3proxy.tar.gz
   cd 3proxy-0.9.4
@@ -201,7 +203,7 @@ install_3proxy() {
   cp bin/3proxy /usr/local/bin/3proxy
   chmod +x /usr/local/bin/3proxy
   cd ~
-  rm -rf /tmp/3proxy*
+  rm -rf "$BUILD_DIR"
   log_ok "3proxy compilado e instalado"
 }
 
@@ -242,12 +244,22 @@ configure() {
   read -p "    Email del administrador [admin@proxifypro.local]: " ADMIN_EMAIL
   ADMIN_EMAIL=${ADMIN_EMAIL:-admin@proxifypro.local}
   
-  read -s -p "    Contraseña del administrador [Admin123!]: " ADMIN_PASS
+  read -s -p "    Contraseña del administrador [Enter = generar aleatoria]: " ADMIN_PASS
   echo ""
-  ADMIN_PASS=${ADMIN_PASS:-Admin123!}
+  # Never fall back to a well-known default password
+  if [ -z "$ADMIN_PASS" ]; then
+    ADMIN_PASS=$(openssl rand -hex 12)
+    echo -e "    ${YELLOW}Contraseña generada:${NC} ${BOLD}$ADMIN_PASS${NC} (guárdala)"
+  fi
   
   read -p "    Puerto del dashboard [3000]: " PORT
   PORT=${PORT:-3000}
+  # PORT ends up in .env, the service unit and the firewall rules
+  while ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; do
+    echo -e "    ${RED}Puerto inválido (1-65535).${NC}"
+    read -p "    Puerto del dashboard [3000]: " PORT
+    PORT=${PORT:-3000}
+  done
   
   LICENSE_KEY=""
   while [ -z "$LICENSE_KEY" ]; do
@@ -258,7 +270,7 @@ configure() {
     fi
   done
   
-  cat > "$INSTALL_DIR/.env" << ENV
+  (umask 077; cat > "$INSTALL_DIR/.env") << ENV
 PORT=$PORT
 DB_PATH=$INSTALL_DIR/data/proxifypro.db
 LOG_PATH=$INSTALL_DIR/logs
@@ -272,6 +284,7 @@ KEYGEN_PRODUCT_ID=$KEYGEN_PRODUCT
 KEYGEN_TOKEN=$KEYGEN_TOKEN
 INITIAL_LICENSE=$LICENSE_KEY
 ENV
+  chmod 600 "$INSTALL_DIR/.env"
   
   log_ok "Configuración guardada"
 }

@@ -20,6 +20,8 @@ SERVICE_NAME="proxifypro"
 NODE_MIN=22
 PROXIFYPRO_VERSION="2.0.0"
 REPO_URL="https://github.com/ProxifyPRO/proxifypro-core"
+RELEASE_API="https://api.github.com/repos/ProxifyPRO/proxifypro-installer/releases/latest"
+RELEASE_ASSET="proxifypro-v2.tar.gz"
 
 # Keygen IDs embebidos
 KEYGEN_ACCOUNT="9750731a-b53a-42f6-b8b7-323546599b23"
@@ -92,6 +94,42 @@ check_os() {
   fi
 }
 
+# ── 2b. PRE-FLIGHT ────────────────────────────────────────
+# Requirements: RAM > 2GB, >= 2 CPU cores, > 1GB free disk.
+# Low disk is fatal; RAM/CPU below spec only warn (fewer dongles still work).
+# Set PROXIFYPRO_SKIP_PREFLIGHT=1 to skip.
+preflight() {
+  log_step "Verificando requisitos del sistema..."
+  if [ "${PROXIFYPRO_SKIP_PREFLIGHT:-0}" = "1" ]; then
+    log_warn "Pre-flight omitido (PROXIFYPRO_SKIP_PREFLIGHT=1)"
+    return
+  fi
+
+  # MemTotal excludes kernel-reserved memory, so a "2GB" host reports ~1.9GB
+  MEM_MB=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  if [ "$MEM_MB" -lt 1900 ]; then
+    log_warn "RAM: ${MEM_MB}MB — se recomiendan más de 2GB"
+  else
+    log_ok "RAM: ${MEM_MB}MB"
+  fi
+
+  CORES=$(nproc 2>/dev/null || echo 1)
+  if [ "$CORES" -lt 2 ]; then
+    log_warn "CPU: $CORES núcleo(s) — se recomiendan al menos 2"
+  else
+    log_ok "CPU: $CORES núcleos"
+  fi
+
+  # Free space where $INSTALL_DIR will live (nearest existing parent)
+  DISK_PATH="$INSTALL_DIR"
+  while [ ! -d "$DISK_PATH" ]; do DISK_PATH=$(dirname "$DISK_PATH"); done
+  DISK_MB=$(df -Pm "$DISK_PATH" | awk 'NR==2 {print $4}')
+  if [ "${DISK_MB:-0}" -lt 1024 ]; then
+    die "Disco: ${DISK_MB}MB libres en $DISK_PATH — se necesita más de 1GB"
+  fi
+  log_ok "Disco: ${DISK_MB}MB libres en $DISK_PATH"
+}
+
 # ── 3. FIX DNS ────────────────────────────────────────────
 fix_dns() {
   log_step "Configurando DNS..."
@@ -128,6 +166,13 @@ install_deps() {
     apt-get install -y -qq curl wget git build-essential sqlite3 net-tools 2>/dev/null
     log_ok "Dependencias base instaladas"
 
+    # Modem networking: dhclient (DHCP inside each namespace), iproute2/iptables,
+    # ethtool (factory MAC) and usb-modeswitch — switches dongles that boot as a
+    # virtual CD-ROM (most Huawei/ZTE/no-name 4G sticks) into modem mode.
+    apt-get install -y -qq isc-dhcp-client iproute2 iptables ethtool usb-modeswitch usb-modeswitch-data 2>/dev/null \
+      && log_ok "Soporte de modems USB (dhclient, usb-modeswitch) instalado" \
+      || log_warn "No se pudieron instalar todas las dependencias de modems (isc-dhcp-client / usb-modeswitch)"
+
     # 3proxy
     if ! command -v 3proxy &> /dev/null; then
       log_detail "Instalando 3proxy..."
@@ -147,14 +192,17 @@ install_deps() {
 
 install_3proxy_source() {
   log_detail "Compilando 3proxy desde fuente..."
-  cd /tmp
+  # Private build dir: fixed /tmp paths let local users plant symlinks or sources
+  BUILD_DIR=$(mktemp -d /tmp/proxifypro-3proxy.XXXXXX)
+  cd "$BUILD_DIR"
   wget -q https://github.com/3proxy/3proxy/archive/refs/tags/0.9.4.tar.gz -O 3proxy.tar.gz
-  tar xzf 3proxy.tar.gz
+  tar xzf 3proxy.tar.gz --no-same-owner
   cd 3proxy-0.9.4
   make -f Makefile.Linux -j$(nproc) 2>/dev/null
   cp bin/3proxy /usr/bin/3proxy
-  chmod +x /usr/bin/3proxy
+  chmod 755 /usr/bin/3proxy
   cd /
+  rm -rf "$BUILD_DIR"
   log_ok "3proxy compilado e instalado"
 }
 
@@ -182,11 +230,37 @@ install_node() {
 }
 
 # ── 6. INSTALL PROXIFYPRO ─────────────────────────────────
+# Prints "<tag>|<asset url>|<sha256 hex>" for the latest release, or
+# nothing if the GitHub API is unreachable. Only accepts asset URLs on
+# this repo's GitHub releases.
+release_meta() {
+  curl -fsSL --max-time 15 -H "Accept: application/vnd.github+json" "$RELEASE_API" 2>/dev/null | \
+    ASSET="$RELEASE_ASSET" node -e '
+      let d="";
+      process.stdin.on("data", c => d += c);
+      process.stdin.on("end", () => {
+        try {
+          const r = JSON.parse(d);
+          const a = (r.assets || []).find(x => x.name === process.env.ASSET);
+          if (!a) return;
+          const url = a.browser_download_url || "";
+          if (!url.startsWith("https://github.com/ProxifyPRO/proxifypro-installer/releases/download/")) return;
+          const m = /^sha256:([0-9a-f]{64})$/.exec(a.digest || "");
+          process.stdout.write([r.tag_name || "", url, m ? m[1] : ""].join("|") + "\n");
+        } catch (e) {}
+      });
+    '
+}
+
 install_proxifypro() {
   log_step "Instalando ProxifyPRO en $INSTALL_DIR..."
 
   mkdir -p "$INSTALL_DIR"/{data,logs,config}
   mkdir -p /var/log/proxifypro /run/proxifypro /etc/proxifypro
+  # Database and logs may hold secrets: keep them away from other local users
+  chmod 700 "$INSTALL_DIR/data"
+  chmod 750 "$INSTALL_DIR/logs" /var/log/proxifypro
+  chgrp adm "$INSTALL_DIR/logs" /var/log/proxifypro 2>/dev/null || true
 
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -199,8 +273,13 @@ install_proxifypro() {
     log_ok "Archivos copiados (modo local)"
   else
     # Running from curl pipe (production mode) — download tarball
-    DOWNLOAD_URL="https://github.com/ProxifyPRO/proxifypro-installer/releases/latest/download/proxifypro-v2.tar.gz"
-    log_detail "Descargando ProxifyPRO v${PROXIFYPRO_VERSION}..."
+    DOWNLOAD_URL="https://github.com/ProxifyPRO/proxifypro-installer/releases/latest/download/$RELEASE_ASSET"
+    RELEASE_TAG=""
+    EXPECTED_SHA=""
+    # Release metadata carries the asset's sha256 digest
+    IFS="|" read -r RELEASE_TAG META_URL EXPECTED_SHA < <(release_meta) || true
+    if [ -n "$META_URL" ]; then DOWNLOAD_URL="$META_URL"; fi
+    log_detail "Descargando ProxifyPRO ${RELEASE_TAG:-v${PROXIFYPRO_VERSION}}..."
     
     TMPTAR=$(mktemp /tmp/proxifypro-XXXXXX.tar.gz)
     HTTP_CODE=$(curl -fsSL -w "%{http_code}" -o "$TMPTAR" "$DOWNLOAD_URL" 2>/dev/null || echo "000")
@@ -209,10 +288,22 @@ install_proxifypro() {
       rm -f "$TMPTAR"
       die "Error descargando ProxifyPRO (HTTP $HTTP_CODE). Verifica tu conexión o contacta soporte."
     fi
+
+    if [ -n "$EXPECTED_SHA" ]; then
+      ACTUAL_SHA=$(sha256sum "$TMPTAR" | cut -d' ' -f1)
+      if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+        rm -f "$TMPTAR"
+        die "Checksum inválido del paquete (esperado $EXPECTED_SHA, obtenido $ACTUAL_SHA). Instalación abortada."
+      fi
+      log_ok "Checksum SHA-256 verificado"
+    else
+      log_warn "No se pudo obtener el checksum de la release — paquete sin verificar"
+    fi
     
     log_detail "Extrayendo archivos..."
-    tar xzf "$TMPTAR" -C "$INSTALL_DIR/" 2>/dev/null || die "Error extrayendo el paquete"
+    tar xzf "$TMPTAR" -C "$INSTALL_DIR/" --no-same-owner 2>/dev/null || die "Error extrayendo el paquete"
     rm -f "$TMPTAR"
+    if [ -n "$RELEASE_TAG" ]; then echo "$RELEASE_TAG" > "$INSTALL_DIR/.release"; fi
     log_ok "ProxifyPRO descargado y extraído"
   fi
 
@@ -254,11 +345,18 @@ configure() {
   echo ""
   read -p "    Email del administrador [admin@proxifypro.local]: " ADMIN_EMAIL < /dev/tty
   ADMIN_EMAIL=${ADMIN_EMAIL:-admin@proxifypro.local}
-  read -s -p "    Contraseña del administrador [Admin123!]: " ADMIN_PASS < /dev/tty
+  read -s -p "    Contraseña del administrador [Enter = generar aleatoria]: " ADMIN_PASS < /dev/tty
   echo ""
-  ADMIN_PASS=${ADMIN_PASS:-Admin123!}
+  # Never fall back to a well-known default: the dashboard listens on 0.0.0.0
+  ADMIN_PASS=${ADMIN_PASS:-$(openssl rand -hex 12)}
   read -p "    Puerto del dashboard [3000]: " PORT < /dev/tty
   PORT=${PORT:-3000}
+  # PORT ends up in .env, the service unit and the firewall rules
+  while ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; do
+    echo -e "    ${RED}Puerto inválido (1-65535).${NC}"
+    read -p "    Puerto del dashboard [3000]: " PORT < /dev/tty
+    PORT=${PORT:-3000}
+  done
   read -p "    Clave de licencia ProxifyPRO: " LICENSE_KEY < /dev/tty
   while [ -z "$LICENSE_KEY" ]; do
     echo -e "    ${RED}La clave de licencia es obligatoria.${NC}"
@@ -266,7 +364,8 @@ configure() {
     read -p "    Clave de licencia: " LICENSE_KEY < /dev/tty
   done
   
-  cat > "$INSTALL_DIR/.env" << EOF
+  # Create .env with 600 from the start (umask), not after it is written
+  (umask 077; cat > "$INSTALL_DIR/.env") << EOF
 # ProxifyPRO V2 Configuration
 # Generated on $(date -Iseconds)
 NODE_ENV=production
@@ -316,6 +415,25 @@ EOF
   echo -e "  ${GREEN}╚═══════════════════════════════════════════╝${NC}"
   
   log_ok "Configuración guardada"
+}
+
+# ── 7b. FIREWALL ──────────────────────────────────────────
+# Dashboard port + per-dongle proxy ports. Rules are only added when ufw is
+# already active: enabling it here could lock the user out of SSH.
+PROXY_PORT_RANGE="30001:31010"
+configure_firewall() {
+  log_step "Configurando firewall..."
+  if ! command -v ufw &> /dev/null; then
+    log_detail "ufw no instalado — omitido"
+    return
+  fi
+  if ! ufw status 2>/dev/null | grep -q "^Status: active"; then
+    log_warn "ufw inactivo — no se modificó. Si lo activas, abre: $PORT/tcp y $PROXY_PORT_RANGE/tcp"
+    return
+  fi
+  ufw allow "$PORT/tcp" comment "ProxifyPRO dashboard" > /dev/null
+  ufw allow "$PROXY_PORT_RANGE/tcp" comment "ProxifyPRO proxies" > /dev/null
+  log_ok "ufw: permitido $PORT/tcp y $PROXY_PORT_RANGE/tcp"
 }
 
 # ── 8. VALIDATE LICENSE ───────────────────────────────────
@@ -403,7 +521,13 @@ setup_permissions() {
   cat > /usr/local/bin/proxifypro-rotate << 'ROTATE'
 #!/bin/bash
 IFACE=$1
-if [ -z "$IFACE" ]; then exit 1; fi
+# Runs via sudo NOPASSWD: accept only a plain interface name (max 15 chars,
+# no leading dash) and never the loopback device.
+if ! [[ "$IFACE" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,14}$ ]] || [ "$IFACE" = "lo" ]; then
+  echo "proxifypro-rotate: invalid interface '$IFACE'" >&2
+  exit 1
+fi
+[ -e "/sys/class/net/$IFACE" ] || { echo "proxifypro-rotate: no such interface '$IFACE'" >&2; exit 1; }
 ip link set "$IFACE" down && sleep 3 && ip link set "$IFACE" up
 ROTATE
   chmod +x /usr/local/bin/proxifypro-rotate
@@ -426,6 +550,9 @@ setup_systemd() {
 Description=ProxifyPRO V2 — 4G Mobile Proxy Management
 After=network-online.target
 Wants=network-online.target
+# Stop restarting after 5 failures in 10 minutes (a crash loop needs a human)
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -436,6 +563,11 @@ ExecStart=$(which node) $INSTALL_DIR/src/dongle/v2/main.js
 Restart=always
 RestartSec=10
 LimitNOFILE=65535
+# Resource limits for the whole cgroup (node + its 3proxy children).
+# No CPUQuota: throttling would slow down proxy traffic.
+MemoryHigh=60%
+MemoryMax=75%
+TasksMax=16384
 StandardOutput=append:$INSTALL_DIR/logs/proxifypro.log
 StandardError=append:$INSTALL_DIR/logs/proxifypro-error.log
 
@@ -443,9 +575,26 @@ StandardError=append:$INSTALL_DIR/logs/proxifypro-error.log
 WantedBy=multi-user.target
 EOF
 
-  # Config 3proxy dir
-  mkdir -p /opt/proxifypro/config
-  chmod 777 /opt/proxifypro/config
+  # Log rotation: the service appends to plain files (not journald), so
+  # rotate with copytruncate — systemd keeps the O_APPEND handle open.
+  cat > /etc/logrotate.d/proxifypro << EOF
+$INSTALL_DIR/logs/*.log /var/log/proxifypro/*.log {
+    daily
+    rotate 14
+    maxsize 100M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root adm
+}
+EOF
+
+  # Config 3proxy dir — the service runs as root and 3proxy configs can
+  # execute commands, so only root may write here.
+  mkdir -p "$INSTALL_DIR/config"
+  chmod 700 "$INSTALL_DIR/config"
 
   systemctl daemon-reload
   systemctl enable proxifypro --quiet
@@ -466,14 +615,144 @@ EOF
 create_cli() {
   log_step "Creando comando CLI..."
 
+  # Install-time values go in an unquoted header; the body is quoted so it
+  # needs no \$ escaping.
   cat > /usr/local/bin/proxifypro << CLIEOF
 #!/bin/bash
 INSTALL_DIR="$INSTALL_DIR"
-PORT=\$(grep "^PORT=" \$INSTALL_DIR/.env 2>/dev/null | cut -d= -f2 || echo 3000)
-case "\$1" in
+PROXIFYPRO_VERSION="$PROXIFYPRO_VERSION"
+RELEASE_API="$RELEASE_API"
+RELEASE_ASSET="$RELEASE_ASSET"
+PROXY_PORT_RANGE="$PROXY_PORT_RANGE"
+CLIEOF
+  cat >> /usr/local/bin/proxifypro << 'CLIEOF'
+BACKUP_DIR="${PROXIFYPRO_BACKUP_DIR:-/var/backups/proxifypro}"
+# Never replaced by an update
+PRESERVE=(.env data logs config)
+
+ok()   { echo -e "\033[0;32m✓\033[0m $1"; }
+fail() { echo -e "\033[0;31m✗\033[0m $1" >&2; exit 1; }
+
+# Writes "<tag>|<asset url>|<sha256 hex>" and saves the release notes to $1.
+release_meta() {
+  curl -fsSL --max-time 15 -H "Accept: application/vnd.github+json" "$RELEASE_API" 2>/dev/null | \
+    ASSET="$RELEASE_ASSET" NOTES="$1" node -e '
+      let d="";
+      process.stdin.on("data", c => d += c);
+      process.stdin.on("end", () => {
+        try {
+          const r = JSON.parse(d);
+          const a = (r.assets || []).find(x => x.name === process.env.ASSET);
+          if (!a) return;
+          const url = a.browser_download_url || "";
+          if (!url.startsWith("https://github.com/ProxifyPRO/proxifypro-installer/releases/download/")) return;
+          const m = /^sha256:([0-9a-f]{64})$/.exec(a.digest || "");
+          require("fs").writeFileSync(process.env.NOTES, (r.name || r.tag_name || "") + "\n\n" + (r.body || ""));
+          process.stdout.write([r.tag_name || "", url, m ? m[1] : ""].join("|") + "\n");
+        } catch (e) {}
+      });
+    '
+}
+
+wait_active() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 2
+    systemctl is-active --quiet proxifypro && return 0
+  done
+  return 1
+}
+
+# Replace $INSTALL_DIR contents (except PRESERVE) with the tree in $1
+install_tree() {
+  rm -rf "$INSTALL_DIR/src"
+  cp -a "$1/." "$INSTALL_DIR/"
+  (cd "$INSTALL_DIR" && npm install --production --silent) || return 1
+}
+
+cmd_update() {
+  [ "$EUID" -eq 0 ] || fail "Ejecuta: sudo proxifypro update"
+  FORCE=0; [ "$1" = "--force" ] && FORCE=1
+
+  WORK=$(mktemp -d /tmp/proxifypro-update.XXXXXX)
+  trap 'rm -rf "$WORK"' EXIT
+
+  echo "Buscando la última versión..."
+  IFS="|" read -r TAG URL SHA < <(release_meta "$WORK/notes") || true
+  [ -n "$URL" ] || fail "No se pudo consultar GitHub Releases. Reintenta más tarde."
+  [ -n "$SHA" ] || fail "La release $TAG no publica checksum SHA-256 — actualización abortada."
+
+  CURRENT=$(cat "$INSTALL_DIR/.release" 2>/dev/null || echo "desconocida")
+  if [ "$TAG" = "$CURRENT" ] && [ "$FORCE" = 0 ]; then
+    ok "Ya tienes la última versión ($TAG). Usa --force para reinstalarla."
+    return 0
+  fi
+  echo "Versión instalada: $CURRENT → nueva: $TAG"
+
+  curl -fsSL --max-time 300 -o "$WORK/pkg.tar.gz" "$URL" || fail "Error descargando $URL"
+  [ "$(sha256sum "$WORK/pkg.tar.gz" | cut -d' ' -f1)" = "$SHA" ] || fail "Checksum inválido — actualización abortada."
+  ok "Checksum SHA-256 verificado"
+
+  mkdir "$WORK/new"
+  tar xzf "$WORK/pkg.tar.gz" -C "$WORK/new" --no-same-owner || fail "Error extrayendo el paquete"
+  [ -f "$WORK/new/package.json" ] && [ -f "$WORK/new/src/dongle/v2/main.js" ] || \
+    fail "Paquete con estructura inesperada — actualización abortada."
+  for p in "${PRESERVE[@]}"; do rm -rf "$WORK/new/$p"; done
+
+  echo "Deteniendo servicio..."
+  systemctl stop proxifypro
+
+  # Backup taken with the service stopped so the database is consistent
+  mkdir -p "$BACKUP_DIR" && chmod 700 "$BACKUP_DIR"
+  BACKUP="$BACKUP_DIR/pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
+  if ! tar czf "$BACKUP" -C "$INSTALL_DIR" --exclude=./node_modules --exclude=./logs .; then
+    systemctl start proxifypro
+    fail "No se pudo crear el backup — actualización abortada, servicio reiniciado."
+  fi
+  chmod 600 "$BACKUP"
+  ok "Backup: $BACKUP"
+  # Keep the 5 most recent pre-update backups
+  ls -1t "$BACKUP_DIR"/pre-update-*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+
+  echo "Instalando $TAG..."
+  if install_tree "$WORK/new"; then
+    echo "$TAG" > "$INSTALL_DIR/.release"
+    # The license guard keeps a hash baseline of the code; a legitimate update
+    # must drop it (as release.sh does) or the new files read as tampering.
+    rm -f /etc/proxifypro/.integrity
+    systemctl start proxifypro
+    if wait_active; then
+      ok "ProxifyPRO actualizado a $TAG"
+      echo ""
+      echo "── Changelog ─────────────────────────────"
+      if [ -s "$WORK/notes" ]; then cat "$WORK/notes"
+      elif [ -f "$INSTALL_DIR/CHANGELOG.md" ]; then head -60 "$INSTALL_DIR/CHANGELOG.md"
+      else echo "(sin notas de versión)"; fi
+      echo ""
+      return 0
+    fi
+  fi
+
+  echo "La nueva versión no arrancó — restaurando backup..." >&2
+  systemctl stop proxifypro 2>/dev/null
+  mkdir "$WORK/old"
+  tar xzf "$BACKUP" -C "$WORK/old"
+  for p in "${PRESERVE[@]}"; do
+    [ -e "$WORK/old/$p" ] || continue
+    rm -rf "$INSTALL_DIR/$p"
+    cp -a "$WORK/old/$p" "$INSTALL_DIR/"
+  done
+  for p in "${PRESERVE[@]}"; do rm -rf "$WORK/old/$p"; done
+  install_tree "$WORK/old"
+  rm -f /etc/proxifypro/.integrity
+  systemctl start proxifypro
+  fail "Actualización fallida; se restauró $CURRENT. Revisa: proxifypro errors"
+}
+
+PORT=$(grep "^PORT=" $INSTALL_DIR/.env 2>/dev/null | cut -d= -f2 || echo 3000)
+case "$1" in
   start)
     systemctl start proxifypro
-    echo -e "\033[0;32m✓\033[0m ProxifyPRO iniciado → http://localhost:\$PORT"
+    echo -e "\033[0;32m✓\033[0m ProxifyPRO iniciado → http://localhost:$PORT"
     ;;
   stop)
     systemctl stop proxifypro
@@ -481,48 +760,50 @@ case "\$1" in
     ;;
   restart)
     systemctl restart proxifypro
-    echo -e "\033[0;32m✓\033[0m ProxifyPRO reiniciado → http://localhost:\$PORT"
+    echo -e "\033[0;32m✓\033[0m ProxifyPRO reiniciado → http://localhost:$PORT"
     ;;
   status)
     systemctl status proxifypro
     ;;
   logs)
-    tail -f \$INSTALL_DIR/logs/proxifypro.log
+    tail -f $INSTALL_DIR/logs/proxifypro.log
     ;;
   errors)
-    tail -f \$INSTALL_DIR/logs/proxifypro-error.log
+    tail -f $INSTALL_DIR/logs/proxifypro-error.log
     ;;
   update)
-    echo "Actualizando ProxifyPRO..."
-    systemctl stop proxifypro
-    SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-    cp -r \$SCRIPT_DIR/src \$INSTALL_DIR/
-    cp \$SCRIPT_DIR/package.json \$INSTALL_DIR/
-    cd \$INSTALL_DIR && npm install --production --silent
-    systemctl start proxifypro
-    echo -e "\033[0;32m✓\033[0m ProxifyPRO actualizado"
+    cmd_update "$2"
     ;;
   open)
-    xdg-open "http://localhost:\$PORT" 2>/dev/null || \
-    echo "Abre en tu navegador: http://localhost:\$PORT"
+    xdg-open "http://localhost:$PORT" 2>/dev/null || \
+    echo "Abre en tu navegador: http://localhost:$PORT"
     ;;
   uninstall)
     read -p "¿Desinstalar ProxifyPRO? Se eliminarán todos los datos [s/N]: " confirm < /dev/tty
-    if [ "\$confirm" = "s" ] || [ "\$confirm" = "S" ]; then
+    if [ "$confirm" = "s" ] || [ "$confirm" = "S" ]; then
       systemctl stop proxifypro 2>/dev/null
       systemctl disable proxifypro 2>/dev/null
       rm -f /etc/systemd/system/proxifypro.service
       rm -f /etc/sudoers.d/proxifypro
       rm -f /usr/local/bin/proxifypro-rotate
-      rm -f /usr/local/bin/proxifypro
-      rm -rf \$INSTALL_DIR
+      rm -f /etc/logrotate.d/proxifypro
+      rm -f /etc/udev/rules.d/99-proxifypro-usb.rules
+      rm -f /etc/sysctl.d/99-proxifypro.conf
+      if command -v ufw &> /dev/null && [ -n "$PORT" ]; then
+        ufw delete allow "$PORT/tcp" > /dev/null 2>&1
+        ufw delete allow "$PROXY_PORT_RANGE/tcp" > /dev/null 2>&1
+      fi
+      rm -rf "$INSTALL_DIR" /var/log/proxifypro
+      udevadm control --reload-rules 2>/dev/null
       systemctl daemon-reload
+      rm -f /usr/local/bin/proxifypro
       echo "ProxifyPRO desinstalado"
+      [ -d "$BACKUP_DIR" ] && echo "Backups conservados en $BACKUP_DIR (bórralos manualmente si no los necesitas)"
     fi
     ;;
   *)
     echo ""
-    echo "  ProxifyPRO v$PROXIFYPRO_VERSION — 4G Mobile Proxy Manager"
+    echo "  ProxifyPRO $(cat "$INSTALL_DIR/.release" 2>/dev/null || echo "v$PROXIFYPRO_VERSION") — 4G Mobile Proxy Manager"
     echo ""
     echo "  Uso: proxifypro {comando}"
     echo ""
@@ -534,11 +815,11 @@ case "\$1" in
     echo "    logs      Ver logs en tiempo real"
     echo "    errors    Ver errores en tiempo real"
     echo "    open      Abrir dashboard en el navegador"
-    echo "    update    Actualizar ProxifyPRO"
+    echo "    update    Actualizar a la última release (--force para reinstalar)"
     echo "    uninstall Desinstalar completamente"
     echo ""
-    echo "  Dashboard: http://localhost:\$PORT"
-    echo "  Docs API:  http://localhost:\$PORT/api/docs"
+    echo "  Dashboard: http://localhost:$PORT"
+    echo "  Docs API:  http://localhost:$PORT/api/docs"
     echo ""
     ;;
 esac
@@ -607,11 +888,13 @@ main() {
   print_banner
   check_root
   check_os
+  preflight
   fix_dns
   install_deps
   install_node
   install_proxifypro
   configure
+  configure_firewall
   # validate_license — delegado a license-guard.js (al arrancar el service)
   setup_permissions
   setup_systemd

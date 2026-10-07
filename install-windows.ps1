@@ -203,10 +203,18 @@ function Install-ProxifyPRO {
 }
 
 # ── 7. CONFIGURE ──────────────────────────────────────────
+# Hex string from the OS CSPRNG (Get-Random is not cryptographically secure)
+function New-SecureToken {
+    param([int]$Bytes = 16)
+    $buf = New-Object byte[] $Bytes
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buf)
+    return -join ($buf | ForEach-Object { $_.ToString("x2") })
+}
+
 function Configure-ProxifyPRO {
     Write-Step "Configurando ProxifyPRO..."
     
-    $jwtSecret = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 64 | ForEach-Object {[char]$_})
+    $jwtSecret = New-SecureToken -Bytes 32
     
     Write-Host ""
     Write-Host "  Configuracion inicial:" -ForegroundColor White
@@ -215,13 +223,23 @@ function Configure-ProxifyPRO {
     $adminEmail = Read-Host "    Email del administrador [admin@proxifypro.local]"
     if ([string]::IsNullOrEmpty($adminEmail)) { $adminEmail = "admin@proxifypro.local" }
     
-    $adminPass = Read-Host "    Contrasena del administrador [Admin123!]" -AsSecureString
+    $adminPass = Read-Host "    Contrasena del administrador [Enter = generar aleatoria]" -AsSecureString
     $adminPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass))
-    if ([string]::IsNullOrEmpty($adminPassPlain)) { $adminPassPlain = "Admin123!" }
+    # Never fall back to a well-known default password
+    if ([string]::IsNullOrEmpty($adminPassPlain)) {
+        $adminPassPlain = New-SecureToken -Bytes 12
+        Write-Host "    Contrasena generada: $adminPassPlain (guardala)" -ForegroundColor Yellow
+    }
     
     $port = Read-Host "    Puerto del dashboard [3000]"
     if ([string]::IsNullOrEmpty($port)) { $port = "3000" }
+    # $port ends up in .env, the service environment and the firewall rule
+    while (-not ($port -match '^\d{1,5}$' -and [int]$port -ge 1 -and [int]$port -le 65535)) {
+        Write-Host "    Puerto invalido (1-65535)." -ForegroundColor Red
+        $port = Read-Host "    Puerto del dashboard [3000]"
+        if ([string]::IsNullOrEmpty($port)) { $port = "3000" }
+    }
     
     $licenseKey = ""
     while ([string]::IsNullOrEmpty($licenseKey)) {
@@ -249,6 +267,9 @@ INITIAL_LICENSE=$licenseKey
 PROXY_BIN=$INSTALL_DIR\bin\3proxy.exe
 "@
     Set-Content -Path "$INSTALL_DIR\.env" -Value $envContent
+    # Restrict .env to Administrators and SYSTEM (the service account); SIDs
+    # are used so this works on non-English Windows.
+    & icacls "$INSTALL_DIR\.env" /inheritance:r /grant:r "*S-1-5-32-544:F" "*S-1-5-18:F" | Out-Null
     Write-Ok "Configuracion guardada"
     
     return @{ Port = $port; Email = $adminEmail; LicenseKey = $licenseKey }
