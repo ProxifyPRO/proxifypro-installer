@@ -709,12 +709,17 @@ cmd_update() {
   echo "Instalando $TAG..."
   if install_tree "$WORK/new"; then
     echo "$TAG" > "$INSTALL_DIR/.release"
+    # The license guard keeps a hash baseline of the code; a legitimate update
+    # must drop it (as release.sh does) or the new files read as tampering.
+    rm -f /etc/proxifypro/.integrity
     systemctl start proxifypro
     if wait_active; then
       ok "ProxifyPRO actualizado a $TAG"
       echo ""
       echo "── Changelog ─────────────────────────────"
-      cat "$WORK/notes"
+      if [ -s "$WORK/notes" ]; then cat "$WORK/notes"
+      elif [ -f "$INSTALL_DIR/CHANGELOG.md" ]; then head -60 "$INSTALL_DIR/CHANGELOG.md"
+      else echo "(sin notas de versión)"; fi
       echo ""
       return 0
     fi
@@ -731,6 +736,7 @@ cmd_update() {
   done
   for p in "${PRESERVE[@]}"; do rm -rf "$WORK/old/$p"; done
   install_tree "$WORK/old"
+  rm -f /etc/proxifypro/.integrity
   systemctl start proxifypro
   fail "Actualización fallida; se restauró $CURRENT. Revisa: proxifypro errors"
 }
